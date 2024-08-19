@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: "AWS::Serverless-2016-10-31"
+Description: AWS IoT Core Sample
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: ""
+
+  CACertificatePem:
+    Type: String
+  CertificatePem:
+    Type: String
+  VerificationCertificatePem:
+    Type: String
+
+Resources:
+  #-------------------------------------------------------
+  #   IoT Core
+  #-------------------------------------------------------
+  CACertificate:
+    Type: AWS::IoT::CACertificate
+    Properties:
+      CACertificatePem: !Sub ${CACertificatePem}
+      CertificateMode: DEFAULT
+      Status: ACTIVE
+      VerificationCertificatePem: !Sub ${VerificationCertificatePem}
+
+  ClientCertificate:
+    DependsOn:
+      - CACertificate
+    Type: AWS::IoT::Certificate
+    Properties:
+      CACertificatePem: !Sub ${CACertificatePem}
+      CertificateMode: DEFAULT
+      CertificatePem: !Sub ${CertificatePem}
+      Status: ACTIVE
+
+  # Thing
+  SiteWiseTutorialDevice1:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: !Sub ${ProjectPrefix}SiteWiseTutorialDevice1
+
+  # Policy
+  Policy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - iot:Connect
+            Resource:
+              - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/*
+          - Effect: Allow
+            Action:
+              - iot:Publish
+            Resource:
+              - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+          - Effect: Allow
+            Action:
+              - iot:Subscribe
+            Resource:
+              - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/*
+          - Effect: Allow
+            Action:
+              - iot:Receive
+            Resource:
+              - !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/*
+      PolicyName: !Sub ${ProjectPrefix}Policy
+
+  # Attach Policy to Certificate
+  PolicyPrincipalAttachment:
+    Type: AWS::IoT::PolicyPrincipalAttachment
+    Properties:
+      PolicyName: !Ref Policy
+      Principal: !Sub ${ClientCertificate.Arn}
+
+  # Attach Certificate to Thing
+  ThingPrincipalAttachment:
+    Type: AWS::IoT::ThingPrincipalAttachment
+    Properties:
+      Principal: !Sub ${ClientCertificate.Arn}
+      ThingName: !Ref SiteWiseTutorialDevice1
+
+  # TopicRule
+  TopicRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub ${ProjectPrefix}TopicRule
+      TopicRulePayload:
+        Actions:
+          - Lambda:
+              FunctionArn: !Sub ${TargetLambdaFunction.Arn}
+        AwsIotSqlVersion: "2016-03-23"
+        # Description: String
+        # ErrorAction:
+        #   Action
+        RuleDisabled: false
+        Sql: |-
+          SELECT
+            *
+          FROM
+            '$aws/things/+/shadow/update/accepted'
+          WHERE
+            startsWith(topic(3), "SiteWiseTutorialDevice")
+
+  #-------------------------------------------------------
+  # CloudWatch LogGroup
+  #-------------------------------------------------------
+  TargetLambdaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${TargetLambdaFunction}
+
+  AWSIotLogsV2:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: AWSIotLogsV2
+
+  #-------------------------------------------------------
+  #   Lambda
+  #-------------------------------------------------------
+  #API Gateway Target Lambda Function
+  TargetLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: Lambda/target_lambda
+      FunctionName: target_lambda
+      Handler: target_lambda.lambda_handler
+      MemorySize: 128
+      Role: !Sub ${LambdaRole.Arn}
+      Runtime: python3.12
+      Timeout: 900
+      #X-Ray
+      Tracing: Active
+      Environment:
+        Variables:
+          LOG_LEVEL: DEBUG
+
+  IoTCoreLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TargetLambdaFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt TopicRule.Arn
+
+  # ------------------------------------------------------------#
+  # IAM
+  # ------------------------------------------------------------#
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambda_FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      RoleName: !Sub ${ProjectPrefix}LambdaRole

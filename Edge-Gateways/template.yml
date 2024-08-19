@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: "AWS::Serverless-2016-10-31"
+Description: AWS IoT Core Sample
+Parameters:
+  ProjectPrefix:
+    Type: String
+    Default: ""
+
+Resources:
+  #-------------------------------------------------------
+  #   IoT Core
+  #-------------------------------------------------------
+  AssetModel:
+    Type: AWS::IoTSiteWise::AssetModel
+    Properties:
+      AssetModelName: DemoModel
+      AssetModelProperties:
+        - DataType: DOUBLE
+          LogicalId: cpu-logical-id
+          Name: CPU
+          Type:
+            TypeName: Measurement
+          Unit: "%"
+        - DataType: DOUBLE
+          LogicalId: memory-logical-id
+          Name: Memory
+          Type:
+            TypeName: Measurement
+          Unit: "MB"
+      AssetModelType: ASSET_MODEL
+
+  Asset:
+    Type: AWS::IoTSiteWise::Asset
+    Properties:
+      AssetModelId: !Ref AssetModel
+      AssetName: DemoAsset
+      AssetProperties:
+        - Alias: /SampleObject/CPU
+          LogicalId: cpu-logical-id
+        - Alias: /SampleObject/Memory
+          LogicalId: memory-logical-id
+
+  IoTSiteWiseGateway:
+    Type: AWS::IoTSiteWise::Gateway
+    Properties:
+      GatewayName: !Sub ${ProjectPrefix}DemoGateway
+      GatewayPlatform:
+        GreengrassV2:
+          CoreDeviceThingName: DemoGatewayGreengrassCoreDevice
